@@ -37,7 +37,7 @@ if [ -z "$OPENAI_API_KEY" ]; then
 fi
 
 INPUT_FILE="$1"
-DELAY=1  # 每次 API 呼叫之間的延遲（秒）
+DELAY=0.333  # 每次 API 呼叫之間的延遲（秒）
 
 # 建立 embedding 目錄
 mkdir -p embedding
