@@ -1,6 +1,12 @@
 #!/bin/bash
 if [ -f .env ]; then
-  source .env
+    while IFS='=' read -r key value; do
+        # 跳過空行和註釋行
+        if [ -z "$key" ] || [[ $key == \#* ]]; then
+            continue
+        fi
+        eval "$key=$value"
+    done < .env
 fi
 
 # 檢查是否提供輸入檔案參數
