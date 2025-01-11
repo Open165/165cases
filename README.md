@@ -19,9 +19,16 @@ Exists file will be skipped. Delete file to re-fetch the embedding
 ```
 
 ## Run similarity service
+```
+Usage of ./165simserv:
+  -embedding-dir string
+        [Required] Path to the OpenAI embedding dir
+  -result-number int
+        [Optional] Result number of similarity (default 5)
+```
 
 ```
-./165simserv -embedding-dir embedding
+./165simserv -embedding-dir embedding -result-number 10
 ```
 This will show prompt below to make sure your understand the charge will happen on each request.
 Currently we use text-embedding-3-large, check [OpenAI Pricing](https://openai.com/api/pricing/#:~:text=Embedding%20models) for details.
