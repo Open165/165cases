@@ -1,7 +1,7 @@
 Make sure your env OPENAI_API_KEY available. 
 You can also editing .env, put OPENAI_API_KEY inside. eg.
 ```
-echo "export OPENAI_API_KEY=sk-proj-tLl...PcA" > .env
+echo "OPENAI_API_KEY=sk-proj-tLl...PcA" > .env
 ```
 
 ## Generate Embedding
