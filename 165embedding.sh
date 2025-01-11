@@ -61,11 +61,23 @@ process_item() {
     echo "Processing ID: $id"
     
     # 只有當檔案不存在時才執行以下處理
-    local ReqText=$(echo $item | jq -r '[.CityName, .CaseTitle, .Summary] | join(" | ")' | \
-                   tr '\n' ' ' | \
-                   tr -s ' ' | \
-                   sed 's/[[:space:]]*$//')
-    
+    local ReqText=$(echo $item | \
+        jq -r '[.CityName, .CaseTitle, .Summary] | join(" | ")' | \
+        # 移除換行符號並轉換成空格
+        tr '\n' ' ' | \
+        # 移除多餘空格
+        tr -s ' ' | \
+        # 移除結尾空白
+        sed 's/[[:space:]]*$//' | \
+        # 處理雙引號
+        sed 's/"/\\"/g' | \
+        # 處理 Windows 風格的換行符號
+        sed 's/\r//g' | \
+        # 額外處理可能造成 JSON 解析錯誤的特殊字元
+        sed 's/\\/\\\\/g' | \
+        # 處理反斜線之後再處理雙引號，確保正確跳脫
+        sed 's/"/\\"/g')
+
     # 呼叫 API 並檢查回應
     response=$(curl -s https://api.openai.com/v1/embeddings \
       -H "Content-Type: application/json" \
