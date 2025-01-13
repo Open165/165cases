@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>搜尋結果</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .search-form {
+            margin-bottom: 20px;
+        }
+        .textarea-container {
+            position: relative;
+            margin-bottom: 10px;
+        }
+        .char-count {
+            position: absolute;
+            bottom: 5px;
+            right: 10px;
+            font-size: 0.9em;
+            color: #666;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 100px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+        }
+        .results-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .results-container {
+                grid-template-columns: 1fr;
+            }
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .result-item {
+            border-bottom: 1px solid #eee;
+            padding: 10px 0;
+        }
+        .result-item:last-child {
+            border-bottom: none;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 0;
+            overflow-x: auto;
+        }
+        .similarity {
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <form id="searchForm" class="search-form">
+            <div class="textarea-container">
+                <textarea 
+                    id="queryInput" 
+                    placeholder="請輸入搜尋內容" 
+                    maxlength="1000"
+                ></textarea>
+                <div class="char-count">
+                    <span id="charCount">0</span>/1000字
+                </div>
+            </div>
+            <button type="submit" id="submitBtn">送出</button>
+        </form>
+        
+        <div id="results" class="results-container" style="display: none;">
+            <div class="card">
+                <h2>搜尋結果</h2>
+                <div id="sortedResults"></div>
+            </div>
+            <div class="card">
+                <h2>原始資料</h2>
+                <pre id="rawJson"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 字數計數功能
+        document.getElementById('queryInput').addEventListener('input', function() {
+            const charCount = this.value.length;
+            document.getElementById('charCount').textContent = charCount;
+        });
+
+        document.getElementById('searchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const submitBtn = document.getElementById('submitBtn');
+            const query = document.getElementById('queryInput').value;
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = '搜尋中...';
+            
+            try {
+                const response = await fetch(`${window.location.pathname}?q=${encodeURIComponent(query)}`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                console.error('Error:', error);
+                alert('發生錯誤，請稍後再試');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '送出';
+            }
+        });
+
+        function displayResults(data) {
+            // 顯示結果容器
+            document.getElementById('results').style.display = 'grid';
+            
+            // 排序結果
+            const sortedResults = data.similarity
+                .map(sim => ({
+                    ...sim,
+                    ...data.documents[sim.Index]
+                }))
+                .sort((a, b) => b.Similarity - a.Similarity);
+
+            // 顯示排序後的結果
+            const resultsHtml = sortedResults.map(item => `
+                <div class="result-item">
+                    <div class="similarity">相似度: ${(item.Similarity * 100).toFixed(2)}%</div>
+                    <div>日期: ${new Date(item.CaseDate).toLocaleDateString('zh-TW')}</div>
+                    <div>城市: ${item.CityName}</div>
+                    <div>摘要: ${item.Summary}</div>
+                </div>
+            `).join('');
+            
+            document.getElementById('sortedResults').innerHTML = resultsHtml;
+            
+            // 顯示原始JSON
+            document.getElementById('rawJson').textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>
