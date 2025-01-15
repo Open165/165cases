@@ -15,6 +15,33 @@
             max-width: 1200px;
             margin: 0 auto;
         }
+        .example-cases {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .example-cases h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .case-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .case-links a {
+            padding: 8px 15px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            color: #333;
+            text-decoration: none;
+            transition: background-color 0.2s;
+        }
+        .case-links a:hover {
+            background-color: #e0e0e0;
+        }
         .search-form {
             margin-bottom: 20px;
         }
@@ -91,6 +118,15 @@
 </head>
 <body>
     <div class="container">
+        <div class="example-cases">
+            <h3>常見案例：</h3>
+            <div class="case-links">
+                <a href="#" data-case="我收到一個自稱是銀行客服的電話，說我的帳戶有異常交易，要求我配合調查。">銀行詐騙案例</a>
+                <a href="#" data-case="在網路購物平台上看到一款價格特別便宜的商品，賣家要求使用面交或是私下匯款。">網購詐騙案例</a>
+                <a href="#" data-case="接到自稱是公務機關的電話，說我有一份包裹沒領取，要我去ATM操作。">假冒公務機關詐騙</a>
+                <a href="#" data-case="在租屋網站上看到一間租金特別便宜的房子，房東要求先匯訂金才能看房。">租屋詐騙案例</a>
+            </div>
+        </div>
         <form id="searchForm" class="search-form">
             <div class="textarea-container">
                 <textarea 
@@ -112,12 +148,28 @@
             </div>
             <div class="card">
                 <h2>原始資料</h2>
+                資料來源: https://165dashboard.tw/city-case-summary
                 <pre id="rawJson"></pre>
             </div>
         </div>
     </div>
 
     <script>
+        // 案例連結點擊處理
+        document.querySelector('.case-links').addEventListener('click', function(e) {
+            if (e.target.tagName === 'A') {
+                e.preventDefault();
+                const caseText = e.target.getAttribute('data-case');
+                const textarea = document.getElementById('queryInput');
+                textarea.value = caseText;
+                // 更新字數計數
+                document.getElementById('charCount').textContent = caseText.length;
+                // 自動滾動到輸入框
+                textarea.scrollIntoView({ behavior: 'smooth' });
+                textarea.focus();
+            }
+        });
+
         // 字數計數功能
         document.getElementById('queryInput').addEventListener('input', function() {
             const charCount = this.value.length;
