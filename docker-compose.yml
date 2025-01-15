@@ -1,0 +1,12 @@
+services:
+  165serv:
+    image: 165simserv
+    container_name: 165serv
+    ports:
+      - "9989:9989"
+    volumes:
+      - ./embedding:/usr/src/app/embedding
+    env_file:
+      - .env
+    restart: always
+    command: 165simserv -embedding-dir embedding -force

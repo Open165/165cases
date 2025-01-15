@@ -57,6 +57,7 @@ type Response struct {
 }
 
 var openaiApiKey string
+var force bool
 var embeddingDir string
 var resultLength int
 var embeddings map[string][]float32
@@ -298,6 +299,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 func init() {
 	flag.StringVar(&embeddingDir, "embedding-dir", "", "[Required] Path to the OpenAI embedding dir")
 	flag.IntVar(&resultLength, "result-number", 5, "[Optional] Result number of similarity")
+  flag.BoolVar(&force, "force", false, "[Optional] Skip user confirmation if set")
 }
 
 func promptUserConfirmation() bool {
@@ -341,7 +343,7 @@ func main() {
 	log.Printf("OpenAI API Key: %s ... done\n", openaiApiKey[0:10])
 
 	// Prompt for user confirmation
-	if !promptUserConfirmation() {
+  if !force && !promptUserConfirmation() {
 		fmt.Println("Service startup cancelled by user")
 		return
 	}
