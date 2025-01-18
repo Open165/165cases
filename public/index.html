@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>搜尋結果</title>
+    <title>165案例AI搜尋測試</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -112,15 +112,48 @@
         }
         .similarity {
             font-weight: bold;
-            color: #007bff;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        /* 定義相似度的顏色變數 */
+        :root {
+            --low-similarity: rgb(52, 199, 89);    /* 綠色 (30% 或更低) */
+            --high-similarity: rgb(255, 59, 48);   /* 紅色 (70% 或更高) */
+        }
+        
+        /* 根據相似度生成顏色的CSS class */
+        .similarity[data-value="low"] {
+            background-color: var(--low-similarity);
+            color: white;
+        }
+        .similarity[data-value="high"] {
+            background-color: var(--high-similarity);
+            color: white;
+        }
+        .similarity[data-value="mid"] {
+						background-color: rgb(
+								calc(52 + (var(--similarity-normalized) * (255 - 52))),
+								calc(199 - (var(--similarity-normalized) * (199 - 59))),
+								calc(89 - (var(--similarity-normalized) * (89 - 48)))
+						);
+						color: white;
         }
     </style>
 </head>
 <body>
     <div class="container">
+        <h1>165案例AI搜尋測試</h1>
         <div class="example-cases">
-            <h3>常見案例：</h3>
+            <h3>常見詐騙關鍵字：</h3>
             <div class="case-links">
+                <a href="#" data-case="蝦皮">蝦皮</a>
+                <a href="#" data-case="7-11賣貨便">7-11賣貨便</a>
+                <a href="#" data-case="LINE">LINE</a>
+                <a href="#" data-case="抽獎">抽獎</a>
+                <a href="#" data-case="投資">投資</a>
+                <a href="#" data-case="穩賺">穩賺</a>
+                <a href="#" data-case="保證金">保證金</a>
+                <a href="#" data-case="貸款">貸款</a>
                 <a href="#" data-case="我收到一個自稱是銀行客服的電話，說我的帳戶有異常交易，要求我配合調查。">銀行詐騙案例</a>
                 <a href="#" data-case="在網路購物平台上看到一款價格特別便宜的商品，賣家要求使用面交或是私下匯款。">網購詐騙案例</a>
                 <a href="#" data-case="接到自稱是公務機關的電話，說我有一份包裹沒領取，要我去ATM操作。">假冒公務機關詐騙</a>
@@ -131,24 +164,24 @@
             <div class="textarea-container">
                 <textarea 
                     id="queryInput" 
-                    placeholder="請輸入搜尋內容" 
-                    maxlength="1000"
+                    placeholder="請輸入疑似詐騙文案，越長的文字越容易找到相似案例" 
+                    maxlength="600"
                 ></textarea>
                 <div class="char-count">
-                    <span id="charCount">0</span>/1000字
+                    <span id="charCount">0</span>/600字
                 </div>
             </div>
-            <button type="submit" id="submitBtn">送出</button>
+            <button type="submit" id="submitBtn">尋找相關案例</button>
         </form>
         
         <div id="results" class="results-container" style="display: none;">
             <div class="card">
                 <h2>搜尋結果</h2>
+                <div>所有資料來自 <a href="https://165dashboard.tw/" target="_blank" rel="nofollow">165打詐儀表板</a></div>
                 <div id="sortedResults"></div>
             </div>
             <div class="card">
                 <h2>原始資料</h2>
-                資料來源: https://165dashboard.tw/city-case-summary
                 <pre id="rawJson"></pre>
             </div>
         </div>
@@ -215,15 +248,44 @@
                 }))
                 .sort((a, b) => b.Similarity - a.Similarity);
 
+            // 計算相似度的顏色值
+            const calculateSimilarityColor = (similarity) => {
+                const percentage = similarity * 100;
+                if (percentage <= 30) {
+                    return {
+                        value: 'low',
+                        style: ''
+                    };
+                }
+                if (percentage >= 70) {
+                    return {
+                        value: 'high',
+                        style: ''
+                    };
+                }
+                // 計算 30%~70% 之間的正規化值 (0~1)
+                const normalized = (percentage - 30) / (70 - 30);
+                return {
+                    value: 'mid',
+                    style: `--similarity-normalized: ${normalized}`
+                };
+            };
+
             // 顯示排序後的結果
-            const resultsHtml = sortedResults.map(item => `
+            const resultsHtml = sortedResults.map(item => {
+                const colorInfo = calculateSimilarityColor(item.Similarity);
+                return `
                 <div class="result-item">
-                    <div class="similarity">相似度: ${(item.Similarity * 100).toFixed(2)}%</div>
+                    <div class="similarity" 
+                         data-value="${colorInfo.value}" 
+                         style="${colorInfo.style}">
+                        相似度: ${(item.Similarity * 100).toFixed(2)}%
+                    </div>
                     <div>日期: ${new Date(item.CaseDate).toLocaleDateString('zh-TW')}</div>
                     <div>城市: ${item.CityName}</div>
                     <div>摘要: ${item.Summary}</div>
                 </div>
-            `).join('');
+            `}).join('');
             
             document.getElementById('sortedResults').innerHTML = resultsHtml;
             
