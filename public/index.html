@@ -138,6 +138,25 @@
 						);
 						color: white;
         }
+        /* 加入相關文件連結的樣式 */
+        .related-link {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 8px;
+            padding: 5px 10px;
+            background-color: #e9f5ff;
+            border-radius: 4px;
+            color: #0066cc;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        .related-link:hover {
+            background-color: #cce7ff;
+        }
+        .related-link svg {
+            margin-right: 5px;
+        }
     </style>
 </head>
 <body>
@@ -232,7 +251,7 @@
                 alert('發生錯誤，請稍後再試');
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.textContent = '送出';
+                submitBtn.textContent = '尋找相關案例';
             }
         });
 
@@ -271,6 +290,9 @@
                 };
             };
 
+            // 搜尋圖示SVG
+            const searchIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+
             // 顯示排序後的結果
             const resultsHtml = sortedResults.map(item => {
                 const colorInfo = calculateSimilarityColor(item.Similarity);
@@ -284,6 +306,9 @@
                     <div>日期: ${new Date(item.CaseDate).toLocaleDateString('zh-TW')}</div>
                     <div>城市: ${item.CityName}</div>
                     <div>摘要: ${item.Summary}</div>
+                    <a href="${window.location.pathname}?id=${item.ID}" class="related-link">
+                        ${searchIcon} 尋找相關文件
+                    </a>
                 </div>
             `}).join('');
             
