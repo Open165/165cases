@@ -342,11 +342,7 @@
             document.getElementById('relatedResults').innerHTML = `
                 <div class="placeholder-message">點擊「尋找相關文件」按鈕顯示相關文件</div>
             `;
-
-            function attachRelatedButtonEvents() {
-              document.querySelectorAll('.related-link').forEach(button => {
-                button.removeEventListener('click', handleRelatedButtonClick);
-                button.addEventListener('click', async function() {
+            async function handleRelatedButtonClick() {
                     const id = this.getAttribute('data-id');
                     const originalText = this.innerHTML;
                     
@@ -397,7 +393,7 @@
                                 <div>城市: ${item.CityName}</div>
                                 <div>摘要: ${item.Summary}</div>
                                 <button class="related-link" data-id="${item.Id}">
-                                    ${searchIcon} 尋找相關文件
+                                    ${searchIcon} 繼續篩選
                                 </button>
                             </div>
                             `;
@@ -417,7 +413,12 @@
                         this.disabled = false;
                         this.innerHTML = originalText;
                     }
-                });
+            }
+
+            function attachRelatedButtonEvents() {
+              document.querySelectorAll('.related-link').forEach(button => {
+                button.removeEventListener('click', handleRelatedButtonClick);
+                button.addEventListener('click', handleRelatedButtonClick);
               });
             }
 
