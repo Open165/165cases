@@ -10,4 +10,4 @@ services:
     env_file:
       - .env
     restart: always
-    command: 165simserv -embedding-dir embedding -force
+    command: 165simserv -embedding-dir embedding -result-number 8 -force
