@@ -395,12 +395,18 @@
                                 <div>日期: ${new Date(item.CaseDate).toLocaleDateString('zh-TW')}</div>
                                 <div>城市: ${item.CityName}</div>
                                 <div>摘要: ${item.Summary}</div>
+                                <button class="related-link" data-id="${item.Id}">
+                                    ${searchIcon} 尋找相關文件
+                                </button>
                             </div>
                             `;
                         }).join('');
                         
                         // 更新右側區域
                         relatedResultsContainer.innerHTML = relatedResultsHtml;
+                        
+                        // 為新添加的相關文件按鈕添加點擊事件
+                        attachRelatedButtonEvents();
                         
                     } catch (error) {
                         console.error('Error fetching related documents:', error);
