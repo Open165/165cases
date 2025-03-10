@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -81,9 +82,39 @@ func dotProduct(v1, v2 []float32) float32 {
 }
 
 func orderDocumentSectionsInQuerySimilarity(query string, resultLen int) ([]DocumentSimilarity, error) {
-	queryEmbedding, err := openaiGetEmbedding(query)
-	if err != nil {
-		return nil, err
+	var queryEmbedding []float32
+	var err error
+
+	// check if id
+	numericPattern := regexp.MustCompile(`^\d{18,30}$`)
+	if numericPattern.MatchString(query) {
+		embeddingFilePath := filepath.Join(embeddingDir, fmt.Sprintf("%s.json", query))
+		if _, fileErr := os.Stat(embeddingFilePath); !os.IsNotExist(fileErr) {
+			// using saved embedding for similarity
+			caseData, fileErr := loadCaseData(embeddingDir, query)
+			if fileErr == nil && caseData.Embedding != nil {
+				queryEmbedding = caseData.Embedding
+				log.Printf("Using embedding from file for query ID: %s", query)
+			} else {
+				log.Printf("Failed to load embedding from file: %v, falling back to API", fileErr)
+				queryEmbedding, err = openaiGetEmbedding(query)
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			// Using OpenAI to generate embedding
+			queryEmbedding, err = openaiGetEmbedding(query)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// Using OpenAI to generate embedding
+		queryEmbedding, err = openaiGetEmbedding(query)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	documentSimilarities := make([]DocumentSimilarity, 0, len(embeddings))
@@ -241,9 +272,27 @@ func loadCaseData(embeddingDir string, id string) (*CaseData, error) {
 	return &caseData, nil
 }
 
+// check if valid ID
+func isValidId(id string) bool {
+	pattern := regexp.MustCompile(`^\d{1,30}$`)
+	return pattern.MatchString(id)
+}
+
 // Handler function for the incoming HTTP request
 func requestHandler(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
+	// check if we has ID
+	id := r.URL.Query().Get("id")
+	query := ""
+
+	if id != "" {
+		if !isValidId(id) {
+			http.Error(w, "Invalid id format. ID must be numeric and max 30 digits.", http.StatusBadRequest)
+			return
+		}
+		query = id
+	} else {
+		query = r.URL.Query().Get("q")
+	}
 
 	// serve html when no query
 	if query == "" {
@@ -299,7 +348,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 func init() {
 	flag.StringVar(&embeddingDir, "embedding-dir", "", "[Required] Path to the OpenAI embedding dir")
 	flag.IntVar(&resultLength, "result-number", 5, "[Optional] Result number of similarity")
-  flag.BoolVar(&force, "force", false, "[Optional] Skip user confirmation if set")
+	flag.BoolVar(&force, "force", false, "[Optional] Skip user confirmation if set")
 }
 
 func promptUserConfirmation() bool {
@@ -343,7 +392,7 @@ func main() {
 	log.Printf("OpenAI API Key: %s ... done\n", openaiApiKey[0:10])
 
 	// Prompt for user confirmation
-  if !force && !promptUserConfirmation() {
+	if !force && !promptUserConfirmation() {
 		fmt.Println("Service startup cancelled by user")
 		return
 	}
