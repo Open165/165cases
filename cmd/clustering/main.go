@@ -112,9 +112,6 @@ func kmeans(embeddings [][]float64, k int, maxIter int) ([]int, [][]float64) {
 }
 
 func nameCluster(cluster Cluster) string {
-	// Find representative documents
-	findCenterDocuments(cluster.Documents, 3)
-
 	// Extract keywords using TF-IDF
 	keywords := extractKeywords(cluster.Documents)
 	cluster.Keywords = keywords
@@ -131,16 +128,6 @@ func nameCluster(cluster Cluster) string {
 func extractKeywords(docs []Document) []string {
 	if len(docs) == 0 {
 		return []string{}
-	}
-
-	// Get API key from environment
-	if openaiApiKey == "" {
-		apiKey := os.Getenv("OPENAI_API_KEY")
-		openaiApiKey = apiKey
-		if openaiApiKey == "" {
-			fmt.Println("Error: OPENAI_API_KEY not found in environment")
-			return []string{}
-		}
 	}
 
 	// Take the center documents to represent the cluster
@@ -234,19 +221,6 @@ func convertEmbedding(embedding []float32) []float64 {
 		result[i] = float64(v)
 	}
 	return result
-}
-
-// Save clusters to a JSON file
-func saveClustersToFile(clusters []Cluster, filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(clusters)
 }
 
 // Save individual cluster to a JSON file
@@ -361,6 +335,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Get API key from environment
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	openaiApiKey = apiKey
+	if openaiApiKey == "" {
+		fmt.Println("Error: please specify OPENAI_API_KEY in .env or your system environment variable")
+		return
+	}
+
 	// Load all case data
 	fmt.Printf("Loading case data from %s...\n", *embeddingDir)
 	casesData, err := loadAllCaseData(*embeddingDir)
@@ -434,14 +416,6 @@ func main() {
 		return
 	}
 
-	// Save the clusters to a JSON file
-	clusterNamePath := filepath.Join(*outputDir, "cluster-name.json")
-	err = saveClustersToFile(clusters, clusterNamePath)
-	if err != nil {
-		fmt.Printf("Error saving clusters: %v\n", err)
-		return
-	}
-
 	// Save the cluster index to a JSON file
 	clusterIndexPath := filepath.Join(*outputDir, "cluster-index.json")
 	err = saveClusterIndexToFile(clusterIndex, clusterIndexPath)
@@ -458,15 +432,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("Clustering completed and saved to:\n- %s\n- %s\n", clusterNamePath, clusterIndexPath)
+	fmt.Printf("Clustering completed and saved to:\n- %s\n", clusterIndexPath)
 	fmt.Printf("- Individual cluster files in format cluster-{CaseData.Id}.json\n")
-
-	// Print cluster statistics
-	fmt.Println("\nCluster Statistics:")
-	for i, cluster := range clusters {
-		fmt.Printf("Cluster %d (ID: %s): %d documents, Name: %s\n",
-			i, cluster.Id, len(cluster.DocIds), cluster.Name)
-	}
 }
 
 func generateClusterSummary(cluster Cluster) string {
