@@ -269,6 +269,9 @@ func loadCaseData(embeddingDir string, id string) (*CaseData, error) {
 		return nil, fmt.Errorf("failed to parse JSON file %s: %w", filePath, err)
 	}
 
+	if len(caseData.Summary) <= 100 {
+		return nil, fmt.Errorf("summary length for case %s is not greater than 100 characters", id)
+	}
 	return &caseData, nil
 }
 
