@@ -20,20 +20,11 @@
         #title-container {
             width: 100%;
             margin-bottom: 20px;
+            flex-basis: fit-content;
         }
         .split-view {
-            display: flex;
             width: 100%;
             height: calc(100vh - 100px);
-        }
-        .left-panel {
-            width: 30%;
-            overflow-y: auto;
-            padding: 10px;
-            border-right: 1px solid #ddd;
-        }
-        .right-panel {
-            width: 70%;
             overflow-y: auto;
             padding: 10px;
         }
@@ -114,18 +105,21 @@
             font-style: italic;
             color: #777;
         }
+        #board {
+          display: flex;
+          align-items: flex-start;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>165案例分群測試</h1>
-        <div id="title-container"></div>
+        <div id="board">
+            <div id="title-container"></div>
+        </div>
         <div class="split-view" id="split-view" style="display: none;">
-            <div class="left-panel" id="left-panel"></div>
-            <div class="right-panel" id="right-panel">
-                <div id="documents-container"></div>
-                <div id="loading-more" class="loading" style="display: none;">載入更多文章...</div>
-            </div>
+            <div id="documents-container"></div>
+            <div id="loading-more" class="loading" style="display: none;">載入更多文章...</div>
         </div>
     </div>
 
@@ -149,10 +143,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadClusterNames();
             
-            // 監聽右側面板的滾動事件
-            document.getElementById('right-panel').addEventListener('scroll', function(e) {
-                const rightPanel = e.target;
-                if (rightPanel.scrollHeight - rightPanel.scrollTop <= rightPanel.clientHeight + 100) {
+            // 監聽分割視圖的滾動事件
+            document.getElementById('split-view').addEventListener('scroll', function(e) {
+                const splitView = e.target;
+                if (splitView.scrollHeight - splitView.scrollTop <= splitView.clientHeight + 100) {
                     loadMoreDocuments();
                 }
             });
@@ -180,10 +174,12 @@
                 const titleContainer = document.getElementById('title-container');
                 titleContainer.innerHTML = '';
                 
+                let i = 0;
                 for (const [id, name] of Object.entries(data)) {
+                    i++;
                     const titleElement = document.createElement('div');
                     titleElement.className = 'cluster-title';
-                    titleElement.textContent = name;
+                    titleElement.textContent = i+'. '+name;
                     titleElement.dataset.id = id;
                     titleElement.addEventListener('click', function() {
                         selectCluster(id);
@@ -207,17 +203,30 @@
                 }
             });
             
-            // 顯示分割視圖
-            document.getElementById('split-view').style.display = 'flex';
+            // 將分割視圖移動到 board 中
+            const splitView = document.getElementById('split-view');
+            const board = document.getElementById('board');
             
-            // 清空右側面板
+            // 保存原始位置引用，以便可以還原
+            if (!splitView.dataset.originalParent) {
+                splitView.dataset.originalParent = splitView.parentNode.className;
+            }
+            
+            // 移動到 board 中
+            board.appendChild(splitView);
+            
+            // 顯示分割視圖
+            splitView.style.display = 'block';
+            
+            // 清空文件容器
             document.getElementById('documents-container').innerHTML = '';
             document.getElementById('loading-more').style.display = 'none';
             
-            // 顯示選中的 cluster 標題在左側面板
-            const leftPanel = document.getElementById('left-panel');
+            // 在文件容器頂部添加選中的 cluster 標題
+            const documentsContainer = document.getElementById('documents-container');
             const selectedTitle = document.querySelector(`.cluster-title[data-id="${clusterId}"]`).textContent;
-            leftPanel.innerHTML = `<h2>${selectedTitle}</h2>`;
+            documentsContainer.innerHTML = `<h2>${selectedTitle}</h2>`;
+						documentsContainer.scrollIntoView({ behavior: "smooth"});
             
             // 重置載入計數
             loadedCount = 0;
@@ -234,7 +243,7 @@
                 loadMoreDocuments();
             } catch (error) {
                 console.error('Error loading cluster data:', error);
-                document.getElementById('documents-container').innerHTML = '<p>載入 cluster 資料失敗，請重試</p>';
+                document.getElementById('documents-container').innerHTML = `<h2>${selectedTitle}</h2><p>載入 cluster 資料失敗，請重試</p>`;
             }
         }
         
@@ -290,7 +299,6 @@
                 summaryContent = summaryContent.replace(/\n/g, '<br>');
                 
                 documentElement.innerHTML = `
-                    <h3>文件 ID: ${data.Id}</h3>
                     <p><strong>日期:</strong> ${new Date(data.CaseDate).toLocaleDateString()}</p>
                     <p><strong>城市:</strong> ${data.CityName || '未知'}</p>
                     <p><strong>摘要:</strong><br>${summaryContent}</p>
@@ -321,25 +329,38 @@
                 const response = await fetch(`/?id=${docId}`);
                 const data = await response.json();
                 
-                if (data && data.length > 0) {
+                if (data && data.similarity && data.documents) {
                     relatedContentElement.innerHTML = '';
                     
-                    data.forEach(item => {
-                        const relatedItemElement = document.createElement('div');
-                        relatedItemElement.className = 'document-item';
+                    // 忽略第一個值（通常是自己）
+                    const relatedItems = data.similarity.slice(1);
+                    
+                    if (relatedItems.length === 0) {
+                        relatedContentElement.innerHTML = '<p>未找到相關內容</p>';
+                        return;
+                    }
+                    
+                    relatedItems.forEach(item => {
+                        const docId = item.Index;
+                        const docInfo = data.documents[docId];
                         
-                        let itemSummary = item.Summary || '無摘要';
-                        itemSummary = itemSummary.replace(/\n/g, '<br>');
-                        
-                        relatedItemElement.innerHTML = `
-                            <h3>文件 ID: ${item.Id}</h3>
-                            <p><strong>日期:</strong> ${new Date(item.CaseDate).toLocaleDateString()}</p>
-                            <p><strong>城市:</strong> ${item.CityName || '未知'}</p>
-                            <p><strong>摘要:</strong><br>${itemSummary}</p>
-                            <p><strong>相似度:</strong> ${item.Similarity ? (item.Similarity * 100).toFixed(2) + '%' : '未知'}</p>
-                        `;
-                        
-                        relatedContentElement.appendChild(relatedItemElement);
+                        if (docInfo) {
+                            const relatedItemElement = document.createElement('div');
+                            relatedItemElement.className = 'document-item';
+                            
+                            let itemSummary = docInfo.Summary || '無摘要';
+                            itemSummary = itemSummary.replace(/\n/g, '<br>');
+                            
+                            relatedItemElement.innerHTML = `
+                                <p><strong>日期:</strong> ${new Date(docInfo.CaseDate).toLocaleDateString()}</p>
+                                <p><strong>城市:</strong> ${docInfo.CityName || '未知'}</p>
+                                <p><strong>標題:</strong> ${docInfo.CaseTitle || '未知'}</p>
+                                <p><strong>摘要:</strong><br>${itemSummary}</p>
+                                <p><strong>相似度:</strong> ${(item.Similarity * 100).toFixed(2)}%</p>
+                            `;
+                            
+                            relatedContentElement.appendChild(relatedItemElement);
+                        }
                     });
                 } else {
                     relatedContentElement.innerHTML = '<p>未找到相關內容</p>';
