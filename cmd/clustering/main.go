@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,8 @@ type Cluster struct {
 // ClusterIndex maps document IDs to their cluster IDs for quick lookup
 type ClusterIndex map[string]string
 
+var lastRequestTime time.Time
+var requestMutex sync.Mutex
 var openaiApiKey string
 
 func kmeans(embeddings [][]float64, k int, maxIter int) ([]int, [][]float64) {
@@ -250,6 +253,21 @@ func saveClusterIndexToFile(index ClusterIndex, filename string) error {
 	return encoder.Encode(index)
 }
 
+// saveClusterNamesToFile saves the cluster ID to name mapping to a JSON file
+func saveClusterNamesToFile(clusterNames map[string]string, filePath string) error {
+	data, err := json.MarshalIndent(clusterNames, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling cluster names: %w", err)
+	}
+
+	err = os.WriteFile(filePath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing cluster names file: %w", err)
+	}
+
+	return nil
+}
+
 func loadCaseData(embeddingDir string, id string) (*CaseData, error) {
 	filePath := filepath.Join(embeddingDir, fmt.Sprintf("%s.json", id))
 
@@ -319,6 +337,148 @@ func loadAllCaseData(embeddingDir string) ([]CaseData, error) {
 	}
 
 	return cases, nil
+}
+
+func generateClusterSummary(cluster Cluster) string {
+	// Placeholder for summary generation
+	// In a real application, you might generate a summary from the documents
+	return fmt.Sprintf("Summary for cluster %s with %d documents", cluster.Id, len(cluster.Documents))
+}
+
+// generateClusterName combines information from center documents and keywords
+func generateClusterName(centerDocs []Document, keywords []string) string {
+	// Placeholder for name generation logic
+	if len(keywords) > 0 {
+		return keywords[0]
+	}
+
+	return "Unnamed Cluster"
+}
+
+// getKeywordsFromOpenAI calls the OpenAI API to generate keywords for a given content
+func getKeywordsFromOpenAI(content string) (string, error) {
+	// rate limit
+	requestMutex.Lock()
+	elapsed := time.Since(lastRequestTime)
+	if elapsed < 250*time.Millisecond { // ~4 requests per second
+		sleepTime := 250*time.Millisecond - elapsed
+		time.Sleep(sleepTime)
+	}
+	lastRequestTime = time.Now()
+	requestMutex.Unlock()
+
+	// Structure for OpenAI Chat API request
+	type Message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+
+	type OpenAIChatRequest struct {
+		Model    string    `json:"model"`
+		Messages []Message `json:"messages"`
+	}
+
+	type OpenAIChatResponse struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	// Prepare the API request with the prompt
+	prompt := "請幫我用10個繁體中文字，為這篇內容下標題，請僅回傳標題即可"
+
+	requestData := OpenAIChatRequest{
+		Model: "gpt-3.5-turbo-0125",
+		Messages: []Message{
+			{Role: "system", Content: "You are a helpful assistant that creates concise titles in traditional Chinese."},
+			{Role: "user", Content: content},
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return "", fmt.Errorf("error marshalling request: %w", err)
+	}
+
+	// Make the API request
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", openaiApiKey))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error making request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API request failed with status code %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the response
+	var chatResponse OpenAIChatResponse
+	err = json.Unmarshal(body, &chatResponse)
+	if err != nil {
+		return "", fmt.Errorf("error unmarshalling response: %w", err)
+	}
+
+	if len(chatResponse.Choices) == 0 {
+		return "", fmt.Errorf("no choices in API response")
+	}
+
+	var title = chatResponse.Choices[0].Message.Content
+	fmt.Printf("Title: %v\n", title)
+	return title, nil
+}
+
+// parseKeywords splits the response from OpenAI into individual keywords
+func parseKeywords(response string) []string {
+	// Trim any whitespace
+	response = strings.TrimSpace(response)
+
+	// Split by any common separators (comma, space, newline)
+	separators := []string{",", "，", " ", "、", "\n", "；", ";"}
+
+	var keywords []string
+	// Start with the full response as first keyword
+	keywords = append(keywords, response)
+
+	// Try to split the response by different separators
+	for _, sep := range separators {
+		if strings.Contains(response, sep) {
+			// Split by this separator and clean the results
+			parts := strings.Split(response, sep)
+			var cleanParts []string
+
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					cleanParts = append(cleanParts, part)
+				}
+			}
+
+			// Only use this split if it resulted in multiple parts
+			if len(cleanParts) > 1 {
+				keywords = cleanParts
+				break
+			}
+		}
+	}
+
+	return keywords
 }
 
 // Main function
@@ -424,6 +584,18 @@ func main() {
 		return
 	}
 
+	// Create and save cluster names mapping to a JSON file
+	clusterNames := make(map[string]string)
+	for _, cluster := range clusters {
+		clusterNames[cluster.Id] = cluster.Name
+	}
+	clusterNamesPath := filepath.Join(*outputDir, "cluster-names.json")
+	err = saveClusterNamesToFile(clusterNames, clusterNamesPath)
+	if err != nil {
+		fmt.Printf("Error saving cluster names: %v\n", err)
+		return
+	}
+
 	// Save each cluster to an individual file
 	for _, cluster := range clusters {
 		err := saveClusterToFile(cluster, *outputDir)
@@ -434,134 +606,4 @@ func main() {
 
 	fmt.Printf("Clustering completed and saved to:\n- %s\n", clusterIndexPath)
 	fmt.Printf("- Individual cluster files in format cluster-{CaseData.Id}.json\n")
-}
-
-func generateClusterSummary(cluster Cluster) string {
-	// Placeholder for summary generation
-	// In a real application, you might generate a summary from the documents
-	return fmt.Sprintf("Summary for cluster %s with %d documents", cluster.Id, len(cluster.Documents))
-}
-
-// generateClusterName combines information from center documents and keywords
-func generateClusterName(centerDocs []Document, keywords []string) string {
-	// Placeholder for name generation logic
-	if len(keywords) > 0 {
-		return keywords[0]
-	}
-
-	return "Unnamed Cluster"
-}
-
-// getKeywordsFromOpenAI calls the OpenAI API to generate keywords for a given content
-func getKeywordsFromOpenAI(content string) (string, error) {
-	// Structure for OpenAI Chat API request
-	type Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
-	type OpenAIChatRequest struct {
-		Model    string    `json:"model"`
-		Messages []Message `json:"messages"`
-	}
-
-	type OpenAIChatResponse struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	// Prepare the API request with the prompt
-	prompt := "請幫我用10個繁體中文字，為這篇內容下標題，請僅回傳標題即可"
-
-	requestData := OpenAIChatRequest{
-		Model: "gpt-4o",
-		Messages: []Message{
-			{Role: "system", Content: "You are a helpful assistant that creates concise titles in traditional Chinese."},
-			{Role: "user", Content: content},
-			{Role: "user", Content: prompt},
-		},
-	}
-
-	jsonData, err := json.Marshal(requestData)
-	if err != nil {
-		return "", fmt.Errorf("error marshalling request: %w", err)
-	}
-
-	// Make the API request
-	client := &http.Client{}
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("error creating request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", openaiApiKey))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("error making request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("error reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API request failed with status code %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse the response
-	var chatResponse OpenAIChatResponse
-	err = json.Unmarshal(body, &chatResponse)
-	if err != nil {
-		return "", fmt.Errorf("error unmarshalling response: %w", err)
-	}
-
-	if len(chatResponse.Choices) == 0 {
-		return "", fmt.Errorf("no choices in API response")
-	}
-
-	return chatResponse.Choices[0].Message.Content, nil
-}
-
-// parseKeywords splits the response from OpenAI into individual keywords
-func parseKeywords(response string) []string {
-	// Trim any whitespace
-	response = strings.TrimSpace(response)
-
-	// Split by any common separators (comma, space, newline)
-	separators := []string{",", "，", " ", "、", "\n", "；", ";"}
-
-	var keywords []string
-	// Start with the full response as first keyword
-	keywords = append(keywords, response)
-
-	// Try to split the response by different separators
-	for _, sep := range separators {
-		if strings.Contains(response, sep) {
-			// Split by this separator and clean the results
-			parts := strings.Split(response, sep)
-			var cleanParts []string
-
-			for _, part := range parts {
-				part = strings.TrimSpace(part)
-				if part != "" {
-					cleanParts = append(cleanParts, part)
-				}
-			}
-
-			// Only use this split if it resulted in multiple parts
-			if len(cleanParts) > 1 {
-				keywords = cleanParts
-				break
-			}
-		}
-	}
-
-	return keywords
 }
