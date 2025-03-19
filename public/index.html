@@ -220,7 +220,7 @@
                 <div>所有資料來自 <a href="https://165dashboard.tw/" target="_blank" rel="nofollow">165打詐儀表板</a></div>
                 <div id="sortedResults"></div>
             </div>
-            <div class="card">
+            <div class="card" id="related-document">
                 <h2>相關文件</h2>
                 <div id="relatedResults">
                     <div class="placeholder-message">點擊「尋找相關文件」按鈕顯示相關文件</div>
@@ -342,11 +342,7 @@
             document.getElementById('relatedResults').innerHTML = `
                 <div class="placeholder-message">點擊「尋找相關文件」按鈕顯示相關文件</div>
             `;
-
-            function attachRelatedButtonEvents() {
-              document.querySelectorAll('.related-link').forEach(button => {
-                button.removeEventListener('click', handleRelatedButtonClick);
-                button.addEventListener('click', async function() {
+            async function handleRelatedButtonClick() {
                     const id = this.getAttribute('data-id');
                     const originalText = this.innerHTML;
                     
@@ -397,7 +393,7 @@
                                 <div>城市: ${item.CityName}</div>
                                 <div>摘要: ${item.Summary}</div>
                                 <button class="related-link" data-id="${item.Id}">
-                                    ${searchIcon} 尋找相關文件
+                                    ${searchIcon} 繼續篩選
                                 </button>
                             </div>
                             `;
@@ -408,6 +404,9 @@
                         
                         // 為新添加的相關文件按鈕添加點擊事件
                         attachRelatedButtonEvents();
+                        const scrollTo = document.getElementById("related-document");
+                        scrollTo.scrollIntoView({ behavior: "instant", block: "start" });
+
                         
                     } catch (error) {
                         console.error('Error fetching related documents:', error);
@@ -417,8 +416,14 @@
                         this.disabled = false;
                         this.innerHTML = originalText;
                     }
-                });
+            }
+
+            function attachRelatedButtonEvents() {
+              document.querySelectorAll('.related-link').forEach(button => {
+                button.removeEventListener('click', handleRelatedButtonClick);
+                button.addEventListener('click', handleRelatedButtonClick);
               });
+
             }
 
             // 為每個相關文件按鈕添加點擊事件處理
