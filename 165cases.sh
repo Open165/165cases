@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # 檢查是否提供參數
-if [ $# -ne 1 ]; then
-    echo "使用方法: $0 <循環次數>"
+if [ $# -ne 2 ]; then
+    echo "使用方法: $0 <開始頁數> <循環次數>"
     exit 1
 fi
 
@@ -10,7 +10,7 @@ fi
 mkdir -p cases
 
 # 循環執行
-for ((i=1; i<=$1; i++)); do
+for ((i=$1; i<=$1+$2; i++)); do
     # 使用 printf 確保頁碼有前導零
     filename=$(printf "cases/p%03d.json" $i)
 
