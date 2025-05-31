@@ -8,6 +8,8 @@ require (
 )
 
 require (
+	github.com/asg017/sqlite-vec v0.1.6 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.28 // indirect
 )

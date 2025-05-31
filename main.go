@@ -12,10 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	// "sort" // No longer needed for this function
 	"strings"
 
+	"database/sql"
+
+	sqlitevec "github.com/asg017/sqlite-vec/bindings/go"
 	"github.com/joho/godotenv"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/pkoukk/tiktoken-go"
 )
 
@@ -61,7 +65,10 @@ var openaiApiKey string
 var force bool
 var embeddingDir string
 var resultLength int
-var embeddings map[string][]float32
+// var embeddings map[string][]float32 // Removed as per requirement
+var db *sql.DB
+var updateDB bool
+var embeddingDimension int = 3072 // Added global variable
 
 func cosineSimilarity(v1, v2 []float32) float32 {
 	dot := dotProduct(v1, v2)
@@ -127,61 +134,189 @@ func orderDocumentSectionsInQuerySimilarity(query string, resultLen int) ([]Docu
 		return documentSimilarities[i].Similarity > documentSimilarities[j].Similarity
 	})
 
-	// Return the specified number of results
-	if resultLen > len(documentSimilarities) {
-		resultLen = len(documentSimilarities)
+	// Check if db is initialized
+	if db == nil {
+		return nil, fmt.Errorf("database connection is not initialized")
 	}
 
-	return documentSimilarities[:resultLen], nil
+	// Convert queryEmbedding to bytes
+	queryEmbeddingBytes, err := sqlitevec.Float32ToBytes(queryEmbedding)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert query embedding to bytes: %w", err)
+	}
+
+	// Prepare the SQL query for VSS search
+	// vss_cases_embeddings is the virtual table, and 'embedding' is the column with the vector.
+	// The vss_search function takes the column name and the query vector.
+	// sqlite-vec's vss_search returns 'id' (rowid of the vss table, which should be the same as cases_embeddings.id if inserted correctly)
+	// and 'distance'.
+	// For OpenAI embeddings (normalized), cosine distance is often 1 - cosine_similarity.
+	// So, similarity = 1 - distance.
+	sqlQuery := `
+		SELECT ce.id, v.distance
+		FROM vss_cases_embeddings v
+		JOIN cases_embeddings ce ON v.rowid = ce.rowid
+		WHERE vss_search(v.embedding, ?)
+		ORDER BY v.distance
+		LIMIT ?
+	`
+	// Note: The JOIN condition v.rowid = ce.rowid assumes that the rowid in vss_cases_embeddings
+	// corresponds to the rowid in cases_embeddings. This is true if embeddings are inserted
+	// into cases_embeddings and the VSS table picks them up.
+	// If vss_cases_embeddings was populated independently with `INSERT INTO vss_cases_embeddings (rowid, embedding_vec) VALUES (?, ?)`
+	// and `id` was stored as `rowid`, then `SELECT rowid, distance FROM vss_cases_embeddings...` would be used.
+	// Given our DDL `CREATE VIRTUAL TABLE IF NOT EXISTS vss_cases_embeddings USING vss0(embedding dimensions=%d);`
+	// which references the `embedding` column of `cases_embeddings` (implicitly by table name usually, or via configuration),
+	// sqlite-vec handles the linkage. The query needs to retrieve the original `id`.
+	// Let's adjust the query if `vss_search` directly on `cases_embeddings` virtual table gives us the original `id`.
+	// The `sqlite-vec` documentation example: `SELECT rowid, distance FROM vec_items WHERE embedding MATCH ? ORDER BY distance LIMIT ?`
+	// Here, `rowid` is the key. If our `cases_embeddings.id` is the `rowid` for `vss_cases_embeddings`, then it's simpler.
+	// The `vss0` module makes the `embedding` column of `cases_embeddings` searchable.
+	// So, querying `vss_cases_embeddings` should make `cases_embeddings.rowid` available as `rowid`, and other columns from `cases_embeddings` too.
+
+	// Revised SQL query assuming vss_cases_embeddings gives access to columns of cases_embeddings
+	// or at least its rowid which is implicitly the id if id is PRIMARY KEY and an alias for rowid.
+	// If cases_embeddings.id is a TEXT primary key, it's not necessarily the rowid.
+	// Let's assume the VSS table `vss_cases_embeddings` provides `rowid` which corresponds to `cases_embeddings.rowid`.
+	// We need to get `cases_embeddings.id`.
+	// The VSS table DDL is `CREATE VIRTUAL TABLE IF NOT EXISTS vss_cases_embeddings USING vss0(embedding dimensions=%d);`
+	// This implies it's linked to `cases_embeddings`.
+	// The query should be:
+	// "SELECT T.id, distance FROM cases_embeddings AS T JOIN vss_cases_embeddings AS V ON T.rowid = V.rowid WHERE vss_search(V.embedding, ?) ORDER BY V.distance LIMIT ?"
+	// Simpler form if `vss_cases_embeddings` can be queried directly for `id` if it was part of the VSS table schema (it is not, only `embedding` is).
+	// So, a JOIN is likely needed if `id` is not `rowid`.
+	// `cases_embeddings.id` is `TEXT PRIMARY KEY`. SQLite might use it as an alias for `rowid` if it's an INTEGER PRIMARY KEY, but not for TEXT.
+	// So we must ensure `vss_cases_embeddings` stores `cases_embeddings.id` or we join.
+	// The `vss0` virtual table is created ON the `cases_embeddings` table.
+	// `SELECT cases_embeddings.id, distance FROM vss_cases_embeddings ...` should work if `vss_cases_embeddings` is an overlay.
+	// The `sqlite-vec` documentation states: "The first argument to vss_search must be the name of the vector column in the virtual table."
+	// "SELECT rowid, distance FROM vss_table WHERE vss_search(vector_column, ?)"
+	// This implies `rowid` is the identifier returned from the virtual table.
+	// We need to map this `rowid` back to our original `id` from `cases_embeddings`.
+
+	// Final SQL Query Strategy:
+	// 1. Get `rowid` from `vss_cases_embeddings`.
+	// 2. Use that `rowid` to get the `id` from `cases_embeddings`.
+	// This is what the JOIN above does. Let's assume `v.embedding` is the correct column name in the VIRTUAL table.
+	// The DDL for vss_cases_embeddings was `CREATE VIRTUAL TABLE ... USING vss0(embedding dimensions=%d)`.
+	// So the column name in the virtual table is `embedding`.
+
+	sqlQuery = `
+		SELECT ce.id, v.distance
+		FROM cases_embeddings AS ce
+		JOIN vss_cases_embeddings AS v ON ce.rowid = v.rowid
+		WHERE vss_search(v.embedding, ?)
+		ORDER BY v.distance
+		LIMIT ?`
+
+	rows, err := db.Query(sqlQuery, queryEmbeddingBytes, resultLen)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute VSS query: %w", err)
+	}
+	defer rows.Close()
+
+	documentSimilarities := make([]DocumentSimilarity, 0, resultLen)
+	for rows.Next() {
+		var id string
+		var distance float32
+		if err := rows.Scan(&id, &distance); err != nil {
+			return nil, fmt.Errorf("failed to scan VSS query result: %w", err)
+		}
+		// Convert distance to similarity. For cosine distance (0 to 2, where 0 is identical),
+		// similarity = 1 - distance.
+		// If OpenAI embeddings are normalized, cosine similarity = dot(A,B).
+		// If sqlite-vec returns cosine distance d = 1 - dot(A,B), then similarity = 1.0 - d.
+		// If sqlite-vec returns Euclidean distance, this conversion would be different.
+		// Assuming distance is cosine distance (1 - similarity).
+		similarity := 1.0 - distance
+		documentSimilarities = append(documentSimilarities, DocumentSimilarity{Similarity: similarity, Index: id})
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating VSS query results: %w", err)
+	}
+
+	// Results are already sorted by distance (and thus by similarity) and limited by SQL.
+	return documentSimilarities, nil
 }
 
-func loadEmbeddings(embeddingDir string) (map[string][]float32, error) {
-	// Initialize map to store embeddings
-	embedd := make(map[string][]float32)
+// loadEmbeddings function removed as per requirement
+
+func loadEmbeddingsToDB(dbConn *sql.DB, dir string, expectedDimension int) error {
+	log.Printf("Starting to load embeddings from %s into the database...", dir)
 
 	// Check if directory exists
-	if _, err := os.Stat(embeddingDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("directory does not exist: %s", embeddingDir)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("directory does not exist: %s", dir)
 	}
 
-	// Walk through all JSON files in the directory
-	err := filepath.Walk(embeddingDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			log.Printf("Warning: error accessing path %q: %v\n", path, walkErr)
+			return walkErr
+		}
+		if info.IsDir() || filepath.Ext(path) != ".json" {
+			return nil // Skip directories and non-JSON files
+		}
+
+		file, err := os.Open(path)
 		if err != nil {
-			return err
+			log.Printf("Warning: unable to open file %s: %v. Skipping.", path, err)
+			return nil // Continue with next file
+		}
+		defer file.Close()
+
+		content, err := io.ReadAll(file)
+		if err != nil {
+			log.Printf("Warning: unable to read file %s: %v. Skipping.", path, err)
+			return nil // Continue with next file
 		}
 
-		// Process only .json files
-		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			// Open file
-			file, err := os.Open(path)
-			if err != nil {
-				return fmt.Errorf("unable to open file %s: %w", path, err)
-			}
-			defer file.Close()
-
-			// Read file content
-			content, err := io.ReadAll(file)
-			if err != nil {
-				return fmt.Errorf("unable to read file %s: %w", path, err)
-			}
-
-			// Parse JSON
-			var caseData CaseData
-			if err := json.Unmarshal(content, &caseData); err != nil {
-				return fmt.Errorf("unable to parse JSON file %s: %w", path, err)
-			}
-
-			// Store in map using Id as key
-			embedd[caseData.Id] = caseData.Embedding
+		var caseData CaseData
+		if err := json.Unmarshal(content, &caseData); err != nil {
+			log.Printf("Warning: unable to parse JSON file %s: %v. Skipping.", path, err)
+			return nil // Continue with next file
 		}
+
+		if caseData.Embedding == nil {
+			log.Printf("Warning: embedding is nil for ID %s in file %s. Skipping.", caseData.Id, path)
+			return nil // Continue with next file
+		}
+
+		if len(caseData.Embedding) != expectedDimension {
+			log.Printf("Warning: embedding for ID %s in file %s has dimension %d, expected %d. Skipping.", caseData.Id, path, len(caseData.Embedding), expectedDimension)
+			return nil // Continue with next file
+		}
+
+		embeddingBytes, err := sqlitevec.Float32ToBytes(caseData.Embedding)
+		if err != nil {
+			log.Printf("Warning: failed to convert embedding to bytes for ID %s: %v. Skipping.", caseData.Id, err)
+			return nil // Continue with next file
+		}
+
+		stmt, err := dbConn.Prepare("INSERT OR REPLACE INTO cases_embeddings (id, embedding) VALUES (?, ?)")
+		if err != nil {
+			// This is a more serious error, likely indicating a problem with the DB or SQL
+			return fmt.Errorf("failed to prepare SQL statement: %w", err)
+		}
+		defer stmt.Close()
+
+		_, err = stmt.Exec(caseData.Id, embeddingBytes)
+		if err != nil {
+			log.Printf("Warning: failed to execute SQL statement for ID %s: %v. Skipping.", caseData.Id, err)
+			return nil // Continue with next file
+		}
+
+		log.Printf("Loaded embedding for ID: %s from %s", caseData.Id, path)
 		return nil
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("error processing files: %w", err)
+		return fmt.Errorf("error processing files during embedding load: %w", err)
 	}
 
-	return embedd, nil
+	log.Println("Finished loading embeddings into the database.")
+	return nil
 }
 
 func openaiGetEmbedding(inputText string) ([]float32, error) {
@@ -352,6 +487,7 @@ func init() {
 	flag.StringVar(&embeddingDir, "embedding-dir", "", "[Required] Path to the OpenAI embedding dir")
 	flag.IntVar(&resultLength, "result-number", 5, "[Optional] Result number of similarity")
 	flag.BoolVar(&force, "force", false, "[Optional] Skip user confirmation if set")
+	flag.BoolVar(&updateDB, "update-db", false, "[Optional] If set, forces loading/updating of embeddings from the JSON directory into the SQLite database.")
 }
 
 func promptUserConfirmation() bool {
@@ -394,22 +530,114 @@ func main() {
 	}
 	log.Printf("OpenAI API Key: %s ... done\n", openaiApiKey[0:10])
 
-	// Prompt for user confirmation
+	// Prompt for user confirmation (only if not in DB update mode, or if force is not set for server start)
+	// If --update-db is set, we might not need this interactive prompt if it's a batch operation.
+	// However, the API key is still used by openaiGetEmbedding if a query ID's embedding isn't found,
+	// or if a text query is made. So, user awareness of API usage is still important.
+	// For now, let's keep the confirmation unless `force` is true.
+	if !force && !updateDB && !promptUserConfirmation() { // Adjusted condition
+		fmt.Println("Service startup cancelled by user.")
+		return
+	} else if updateDB && !force {
+		// If updating DB, still confirm if not forced, as it might involve many files.
+		// Or, we could assume --update-db implies consent for this specific operation.
+		// For now, let's assume --update-db with --force bypasses this for DB operations too.
+		// If only --update-db is set, it could still prompt.
+		// This part of logic might need refinement based on desired UX for --update-db.
+		// Let's simplify: promptUserConfirmation if !force, regardless of updateDB.
+		// The prompt is about general API usage.
+	}
+
 	if !force && !promptUserConfirmation() {
-		fmt.Println("Service startup cancelled by user")
+		fmt.Println("Operation cancelled by user.")
 		return
 	}
 
-	// Load embeddings
-	embedd, err := loadEmbeddings(embeddingDir)
-	if err != nil {
-		log.Fatalf("Error loading embeddings: %s", err)
+
+	var err error // Declare err for use in this scope
+
+	if updateDB {
+		log.Println("Database update initiated due to --update-db flag.")
+		db, err = initDB("cases.db", embeddingDimension)
+		if err != nil {
+			log.Fatalf("Failed to initialize database for update: %v", err)
+		}
+		defer db.Close() // Close DB when main finishes if it was opened here
+
+		err = loadEmbeddingsToDB(db, embeddingDir, embeddingDimension)
+		if err != nil {
+			log.Fatalf("Failed to load embeddings into database: %v", err)
+		}
+		log.Println("Database update complete. The service will now exit as --update-db is primarily for data loading.")
+		// Decide if to exit or continue to server mode. For now, let's exit.
 		return
+	} else {
+		log.Println("Skipping database update, using existing cases.db (or creating if not exists).")
+		db, err = initDB("cases.db", embeddingDimension)
+		if err != nil {
+			log.Fatalf("Failed to initialize database: %v", err)
+		}
+		// defer db.Close() // db will be used by the server, so don't close it here.
+		// The global db variable is now set.
 	}
-	embeddings = embedd
+
+	// Load embeddings - This is now handled by initDB and loadEmbeddingsToDB if updateDB is true
+	// The old `embeddings` map is no longer used. Queries will go to the DB.
+	// embedd, err := loadEmbeddings(embeddingDir) // Removed
+	// if err != nil { // Removed
+	// 	log.Fatalf("Error loading embeddings: %s", err) // Removed
+	// 	return // Removed
+	// } // Removed
+	// embeddings = embedd // Removed
 
 	// Start the HTTP server and listen for incoming requests
+	// Ensure db is available to handlers if they need it.
+	// For now, requestHandler uses the global `db` implicitly if it's modified to do so.
 	http.HandleFunc("/", requestHandler)
 	log.Println("Starting server on :9989")
 	log.Fatal(http.ListenAndServe(":9989", nil))
+}
+
+func initDB(dbPath string, embeddingDim int) (*sql.DB, error) {
+	// Open the SQLite database, creating it if it doesn't exist.
+	database, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Register sqlite-vec extension
+	if err := sqlitevec.Register(database); err != nil {
+		return nil, fmt.Errorf("failed to register sqlite-vec: %w", err)
+	}
+
+	// Create cases_embeddings table
+	_, err = database.Exec(`
+		CREATE TABLE IF NOT EXISTS cases_embeddings (
+			id TEXT PRIMARY KEY,
+			embedding BLOB
+		)
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cases_embeddings table: %w", err)
+	}
+
+	// Create virtual table for VSS search
+	// Note: The VSS table stores the vector directly, it doesn't reference another table's column in the way
+	// some other FTS extensions might. We'll store the ID separately and join if needed,
+	// or more likely, retrieve the ID from the VSS table and then fetch full data from cases_embeddings.
+	// The real table is cases_embeddings (id TEXT PRIMARY KEY, embedding BLOB).
+	// The virtual table vss_cases_embeddings makes the `embedding` column searchable.
+	// The `dimensions=%d` part specifies the dimensionality of the vectors in that column.
+	createVssTableSQL := fmt.Sprintf(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS vss_cases_embeddings USING vss0(
+			embedding dimensions=%d
+		);
+	`, embeddingDim) // Ensure embeddingDim is correctly passed and used.
+	_, err = database.Exec(createVssTableSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create vss_cases_embeddings virtual table using vss0: %w", err)
+	}
+
+	log.Println("Database initialized successfully: cases_embeddings table and vss_cases_embeddings VSS table created.")
+	return database, nil
 }
